@@ -158,6 +158,9 @@ def _merge_csp(a, b):
 
 
 class SecurityMiddleware(MiddlewareMixin):
+    CSP_EXEMPT = (
+        '/api/v1/docs/',
+    )
 
     def process_response(self, request, resp):
         if settings.DEBUG and resp.status_code >= 400:
@@ -196,5 +199,7 @@ class SecurityMiddleware(MiddlewareMixin):
             else:
                 staticdomain += " " + settings.SITE_URL
                 dynamicdomain += " " + settings.SITE_URL
-        resp['Content-Security-Policy'] = _render_csp(h).format(static=staticdomain, dynamic=dynamicdomain)
+
+        if request.path not in self.CSP_EXEMPT:
+            resp['Content-Security-Policy'] = _render_csp(h).format(static=staticdomain, dynamic=dynamicdomain)
         return resp
