@@ -8,6 +8,8 @@ from django.utils.translation import ugettext_lazy as _
 
 from pretix.base.forms import I18nModelForm
 from pretix.base.models import Item, Order
+from pretix.base.models.event import SubEvent
+from pretix.base.services.pricing import get_price
 
 
 class ExtendForm(I18nModelForm):
@@ -55,8 +57,23 @@ class CommentForm(I18nModelForm):
         }
 
 
+class SubEventChoiceField(forms.ModelChoiceField):
+    def label_from_instance(self, obj):
+        p = get_price(self.instance.item, self.instance.variation,
+                      voucher=self.instance.voucher,
+                      subevent=obj)
+        return '{} – {} ({} {})'.format(obj.name, obj.get_date_range_display(),
+                                        p, self.instance.order.event.currency)
+
+
 class OrderPositionChangeForm(forms.Form):
     itemvar = forms.ChoiceField()
+    subevent = SubEventChoiceField(
+        SubEvent.objects.none(),
+        label=_('New subevent'),
+        required=True,
+        empty_label=None
+    )
     price = forms.DecimalField(
         required=False,
         max_digits=10, decimal_places=2,
@@ -68,6 +85,7 @@ class OrderPositionChangeForm(forms.Form):
         choices=(
             ('product', 'Change product'),
             ('price', 'Change price'),
+            ('subevent', 'Change sub-event'),
             ('cancel', 'Remove product')
         )
     )
@@ -85,9 +103,15 @@ class OrderPositionChangeForm(forms.Form):
                 pass
 
             initial['price'] = instance.price
+        initial['subevent'] = instance.subevent
 
         kwargs['initial'] = initial
         super().__init__(*args, **kwargs)
+        if instance.order.event.has_subevents:
+            self.fields['subevent'].instance = instance
+            self.fields['subevent'].queryset = instance.order.event.subevents.all()
+        else:
+            del self.fields['subevent']
         choices = []
         for i in instance.order.event.items.prefetch_related('variations').all():
             pname = str(i.name)
@@ -96,11 +120,13 @@ class OrderPositionChangeForm(forms.Form):
             variations = list(i.variations.all())
             if variations:
                 for v in variations:
+                    p = get_price(i, v, voucher=instance.voucher, subevent=instance.subevent)
                     choices.append(('%d-%d' % (i.pk, v.pk),
-                                    '%s – %s (%s %s)' % (pname, v.value, localize(v.price),
+                                    '%s – %s (%s %s)' % (pname, v.value, localize(p),
                                                          instance.order.event.currency)))
             else:
-                choices.append((str(i.pk), '%s (%s %s)' % (pname, localize(i.default_price),
+                p = get_price(i, None, voucher=instance.voucher, subevent=instance.subevent)
+                choices.append((str(i.pk), '%s (%s %s)' % (pname, localize(p),
                                                            instance.order.event.currency)))
         self.fields['itemvar'].choices = choices
 
